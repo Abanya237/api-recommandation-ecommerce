@@ -77,3 +77,51 @@ def health():
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
+@app.route('/tendances')
+def tendances():
+    """Retourne les produits les plus vendus — pour les nouveaux visiteurs"""
+    n = int(request.args.get('n', 5))
+
+    # Top produits par volume de ventes
+    top = matrice.groupby('produit')['score'].sum()\
+                 .sort_values(ascending=False)\
+                 .head(n)
+
+    resultats = [
+        {"produit": produit, "score": round(float(score), 3), "type": "tendance"}
+        for produit, score in top.items()
+    ]
+
+    return jsonify({
+        "type"            : "tendances",
+        "description"     : "Produits les plus populaires — recommandation générique",
+        "recommandations" : resultats
+    })
+
+@app.route('/nouveau-client/<produit_vu>')
+def nouveau_client(produit_vu):
+    """
+    Recommandations pour un nouveau client basées sur
+    le produit qu'il est en train de consulter (KNN pur)
+    """
+    n = int(request.args.get('n', 5))
+
+    tous_produits = matrice['produit'].unique()
+    non_vus = [p for p in tous_produits if p != produit_vu]
+
+    scores = []
+    for produit in non_vus:
+        try:
+            # KNN basé contenu uniquement — pas besoin d'historique client
+            score = knn.predict("NOUVEAU", produit).est
+            scores.append({"produit": produit, "score": round(score, 3)})
+        except:
+            pass
+
+    scores.sort(key=lambda x: x['score'], reverse=True)
+
+    return jsonify({
+        "type"            : "nouveau-client",
+        "produit_consulte": produit_vu,
+        "recommandations" : scores[:n]
+    })
