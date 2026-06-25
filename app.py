@@ -125,3 +125,37 @@ def nouveau_client(produit_vu):
         "produit_consulte": produit_vu,
         "recommandations" : scores[:n]
     })
+@app.route('/tendances')
+def tendances():
+    n = int(request.args.get('n', 5))
+    top = matrice.groupby('produit')['score'].sum()\
+                 .sort_values(ascending=False)\
+                 .head(n)
+    resultats = [
+        {"produit": produit, "score": round(float(score), 3), "type": "tendance"}
+        for produit, score in top.items()
+    ]
+    return jsonify({
+        "type"            : "tendances",
+        "description"     : "Produits les plus populaires",
+        "recommandations" : resultats
+    })
+
+@app.route('/nouveau-client/<produit_vu>')
+def nouveau_client(produit_vu):
+    n = int(request.args.get('n', 5))
+    tous_produits = matrice['produit'].unique()
+    non_vus = [p for p in tous_produits if p != produit_vu]
+    scores = []
+    for produit in non_vus:
+        try:
+            score = knn.predict("NOUVEAU", produit).est
+            scores.append({"produit": produit, "score": round(score, 3)})
+        except:
+            pass
+    scores.sort(key=lambda x: x['score'], reverse=True)
+    return jsonify({
+        "type"            : "nouveau-client",
+        "produit_consulte": produit_vu,
+        "recommandations" : scores[:n]
+    })
