@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import pandas as pd
+import re
 from surprise import SVD, KNNBasic, Dataset, Reader
 
 app = Flask(__name__)
@@ -25,17 +26,52 @@ svd.fit(trainset)
 knn = KNNBasic(k=20, sim_options={'name':'cosine','user_based':False})
 knn.fit(trainset)
 
+# Table de correspondance téléphone → client_id
+print("⏳ Construction de la table de correspondance...")
+if 'telephone' in commandes.columns:
+    tel_map = {}
+    for _, row in commandes.dropna(subset=['telephone']).iterrows():
+        tel_clean = re.sub(r'\D', '', str(row['telephone']))[-9:]
+        if tel_clean and len(tel_clean) >= 6:
+            tel_map[tel_clean] = row['client_id']
+    print(f"✅ {len(tel_map)} correspondances téléphone→client_id")
+else:
+    tel_map = {}
+    print("⚠️ Colonne téléphone non trouvée")
+
 print(f"✅ Modèles prêts — {matrice['client_id'].nunique()} clients chargés")
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route('/')
 def home():
     return jsonify({
-        "message"  : "API Recommandation IA — E-commerce Cameroun",
-        "status"   : "actif",
-        "clients"  : int(matrice['client_id'].nunique()),
-        "produits" : int(matrice['produit'].nunique())
+        "message"       : "API Recommandation IA — E-commerce Cameroun",
+        "status"        : "actif",
+        "clients"       : int(matrice['client_id'].nunique()),
+        "produits"      : int(matrice['produit'].nunique()),
+        "correspondances": len(tel_map)
     })
+
+@app.route('/identifier')
+def identifier():
+    """Fait correspondre un téléphone Shopify avec un client_id"""
+    telephone = request.args.get('tel', '')
+    tel_clean = re.sub(r'\D', '', telephone)[-9:]
+
+    if tel_clean in tel_map:
+        client_id = tel_map[tel_clean]
+        nb_achats = matrice[matrice['client_id']==client_id]['score'].count()
+        return jsonify({
+            "trouve"    : True,
+            "client_id" : client_id,
+            "nb_achats" : int(nb_achats)
+        })
+    else:
+        return jsonify({
+            "trouve"    : False,
+            "client_id" : None,
+            "message"   : "Client non trouvé — recommandations génériques"
+        })
 
 @app.route('/recommander/<client_id>')
 def recommander(client_id):
