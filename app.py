@@ -15,9 +15,8 @@ matrice = commandes.groupby(
 matrice.columns = ['client_id','produit','score']
 matrice['score'] = matrice['score'].clip(upper=5)
 
-reader  = Reader(rating_scale=(1, 5))
-dataset = Dataset.load_from_df(
-    matrice[['client_id','produit','score']], reader)
+reader   = Reader(rating_scale=(1, 5))
+dataset  = Dataset.load_from_df(matrice[['client_id','produit','score']], reader)
 trainset = dataset.build_full_trainset()
 
 svd = SVD(n_factors=50, n_epochs=20, random_state=42)
@@ -41,7 +40,6 @@ def home():
 @app.route('/recommander/<client_id>')
 def recommander(client_id):
     n = int(request.args.get('n', 5))
-
     deja_achetes  = matrice[matrice['client_id']==client_id]['produit'].tolist()
     tous_produits = matrice['produit'].unique()
     non_achetes   = [p for p in tous_produits if p not in deja_achetes]
@@ -64,76 +62,20 @@ def recommander(client_id):
             pass
 
     scores.sort(key=lambda x: x['score'], reverse=True)
-
     return jsonify({
         "client_id"       : client_id,
         "deja_achetes"    : deja_achetes,
         "recommandations" : scores[:n]
     })
 
-@app.route('/health')
-def health():
-    return jsonify({"status": "ok"})
-
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
-@app.route('/tendances')
-def tendances():
-    """Retourne les produits les plus vendus — pour les nouveaux visiteurs"""
-    n = int(request.args.get('n', 5))
-
-    # Top produits par volume de ventes
-    top = matrice.groupby('produit')['score'].sum()\
-                 .sort_values(ascending=False)\
-                 .head(n)
-
-    resultats = [
-        {"produit": produit, "score": round(float(score), 3), "type": "tendance"}
-        for produit, score in top.items()
-    ]
-
-    return jsonify({
-        "type"            : "tendances",
-        "description"     : "Produits les plus populaires — recommandation générique",
-        "recommandations" : resultats
-    })
-
-@app.route('/nouveau-client/<produit_vu>')
-def nouveau_client(produit_vu):
-    """
-    Recommandations pour un nouveau client basées sur
-    le produit qu'il est en train de consulter (KNN pur)
-    """
-    n = int(request.args.get('n', 5))
-
-    tous_produits = matrice['produit'].unique()
-    non_vus = [p for p in tous_produits if p != produit_vu]
-
-    scores = []
-    for produit in non_vus:
-        try:
-            # KNN basé contenu uniquement — pas besoin d'historique client
-            score = knn.predict("NOUVEAU", produit).est
-            scores.append({"produit": produit, "score": round(score, 3)})
-        except:
-            pass
-
-    scores.sort(key=lambda x: x['score'], reverse=True)
-
-    return jsonify({
-        "type"            : "nouveau-client",
-        "produit_consulte": produit_vu,
-        "recommandations" : scores[:n]
-    })
 @app.route('/tendances')
 def tendances():
     n = int(request.args.get('n', 5))
     top = matrice.groupby('produit')['score'].sum()\
-                 .sort_values(ascending=False)\
-                 .head(n)
+                 .sort_values(ascending=False).head(n)
     resultats = [
-        {"produit": produit, "score": round(float(score), 3), "type": "tendance"}
-        for produit, score in top.items()
+        {"produit": p, "score": round(float(s), 3), "type": "tendance"}
+        for p, s in top.items()
     ]
     return jsonify({
         "type"            : "tendances",
@@ -146,6 +88,7 @@ def nouveau_client(produit_vu):
     n = int(request.args.get('n', 5))
     tous_produits = matrice['produit'].unique()
     non_vus = [p for p in tous_produits if p != produit_vu]
+
     scores = []
     for produit in non_vus:
         try:
@@ -153,9 +96,17 @@ def nouveau_client(produit_vu):
             scores.append({"produit": produit, "score": round(score, 3)})
         except:
             pass
+
     scores.sort(key=lambda x: x['score'], reverse=True)
     return jsonify({
         "type"            : "nouveau-client",
         "produit_consulte": produit_vu,
         "recommandations" : scores[:n]
     })
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "ok"})
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
