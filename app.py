@@ -9,7 +9,6 @@ CORS(app)
 
 print("⏳ Chargement des données...")
 commandes = pd.read_csv("commandes_fusionnees.csv")
-
 matrice = commandes.groupby(
     ['client_id','produit_court'])['quantite'].sum().reset_index()
 matrice.columns = ['client_id','produit','score']
@@ -25,6 +24,37 @@ svd.fit(trainset)
 knn = KNNBasic(k=20, sim_options={'name':'cosine','user_based':False})
 knn.fit(trainset)
 
+# ============================================================
+# NOUVEAU : matrice de co-occurrence produit-produit
+# Sert à répondre à /nouveau-client/<produit_vu> avec de VRAIES
+# similarités, au lieu d'interroger un utilisateur fictif "NOUVEAU"
+# qui renvoyait toujours la moyenne globale (bug corrigé ici).
+# ============================================================
+print("⏳ Construction de la matrice de co-occurrence produit-produit...")
+panier_par_client = commandes.groupby('client_id')['produit_court'].apply(set)
+
+from collections import defaultdict
+co_occurrence = defaultdict(lambda: defaultdict(int))
+for produits_achetes in panier_par_client:
+    produits_achetes = list(produits_achetes)
+    for i in range(len(produits_achetes)):
+        for j in range(len(produits_achetes)):
+            if i != j:
+                co_occurrence[produits_achetes[i]][produits_achetes[j]] += 1
+
+def produits_similaires(produit_vu, n=5):
+    """Retourne les n produits les plus souvent achetés avec produit_vu."""
+    if produit_vu not in co_occurrence or len(co_occurrence[produit_vu]) == 0:
+        # Repli : aucune co-occurrence connue -> tendances générales
+        top = matrice.groupby('produit')['score'].sum().sort_values(ascending=False)
+        top = top[top.index != produit_vu].head(n)
+        return [{"produit": p, "score": round(float(s), 3)} for p, s in top.items()]
+
+    voisins = co_occurrence[produit_vu]
+    tries = sorted(voisins.items(), key=lambda x: x[1], reverse=True)[:n]
+    max_count = tries[0][1] if tries else 1
+    return [{"produit": p, "score": round(count / max_count, 3)} for p, count in tries]
+
 print("⏳ Chargement table de correspondance...")
 try:
     with open("tel_client_map.json", "r") as f:
@@ -36,6 +66,7 @@ except Exception as e:
 
 print(f"✅ Modèles prêts — {matrice['client_id'].nunique()} clients")
 
+
 @app.route('/')
 def home():
     return jsonify({
@@ -45,6 +76,7 @@ def home():
         "produits"       : int(matrice['produit'].nunique()),
         "correspondances": len(tel_map)
     })
+
 
 @app.route('/identifier')
 def identifier():
@@ -56,6 +88,7 @@ def identifier():
         return jsonify({"trouve": True, "client_id": client_id, "nb_achats": nb_achats})
     return jsonify({"trouve": False, "client_id": None,
                     "message": "Nouveau client — recommandations génériques"})
+
 
 @app.route('/recommander/<client_id>')
 def recommander(client_id):
@@ -74,6 +107,7 @@ def recommander(client_id):
     scores.sort(key=lambda x: x['score'], reverse=True)
     return jsonify({"client_id": client_id, "deja_achetes": deja, "recommandations": scores[:n]})
 
+
 @app.route('/tendances')
 def tendances():
     n   = int(request.args.get('n', 5))
@@ -84,21 +118,27 @@ def tendances():
                              for p,s in top.items()]
     })
 
+
 @app.route('/nouveau-client/<produit_vu>')
 def nouveau_client(produit_vu):
-    n    = int(request.args.get('n', 5))
-    tous = matrice['produit'].unique()
-    scores = []
-    for p in [x for x in tous if x != produit_vu]:
-        try:
-            scores.append({"produit": p, "score": round(knn.predict("NOUVEAU",p).est,3)})
-        except: pass
-    scores.sort(key=lambda x: x['score'], reverse=True)
-    return jsonify({"type":"nouveau-client","produit_consulte":produit_vu,"recommandations":scores[:n]})
+    """
+    CORRIGÉ : utilise désormais la co-occurrence produit-produit
+    (quels produits sont achetés ensemble) plutôt que knn.predict("NOUVEAU", p),
+    qui renvoyait toujours la même moyenne globale pour tout utilisateur inconnu.
+    """
+    n = int(request.args.get('n', 5))
+    recos = produits_similaires(produit_vu, n)
+    return jsonify({
+        "type": "nouveau-client",
+        "produit_consulte": produit_vu,
+        "recommandations": recos
+    })
+
 
 @app.route('/health')
 def health():
     return jsonify({"status": "ok"})
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
